@@ -4,15 +4,14 @@
 #include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
-/*
-    解耦发送和接受消息
-    实现elf，源码，makefile不在同一个文件夹下
-    实现git控制版本
-*/
-#define address     "127.0.0.1"
-#define port        1234
+#include <sys/select.h>
+#include <string.h>
 
-int main(int argc , char** argv)
+
+#define target_address     "127.0.0.1"
+#define target_port        1234
+
+int create_client_socket(char* address , int port)
 {
     int client_sock_fd = socket(AF_INET , SOCK_STREAM , 0); 
     if(client_sock_fd == -1)
@@ -31,37 +30,70 @@ int main(int argc , char** argv)
         close(client_sock_fd);
         exit(-1);   
     }
-    printf("success connect to %s  %d \n start chatting!\n" , address , port);
+    printf("success connect to %s  %d \n start chatting!\n" , target_address , target_port);
+    return client_sock_fd;
+}
+
+
+int main(int argc , char** argv)
+{
+    int client_sock_fd = create_client_socket(target_address , target_port);
 
     char send_buffer[1024];
     char rec_buffer[1024];
     int rec_len = 0;
-    while (1)
+    
+    fd_set read_set;    //stdin是只读的
+
+    for(;;)
     {
-        /* code */
-        scanf("%s" , send_buffer);
-        if(send_buffer[0] == 'q' && send_buffer[1] == '\0')
+        FD_ZERO(&read_set);
+        FD_SET(client_sock_fd , &read_set);
+        FD_SET(STDIN_FILENO , &read_set);
+    
+        if(-1 == select(client_sock_fd+1 , &read_set , NULL , NULL , NULL))
         {
-            printf("exit chat!\n");
-            close(client_sock_fd);
-            exit(0);
+            perror("select:");
+            exit(-1);
         }
-        
-        if(send(client_sock_fd , send_buffer , sizeof(send_buffer) , 0) == -1)
+
+        if(FD_ISSET(STDIN_FILENO , &read_set))
         {
-            perror("fail to send!"); 
-            close(client_sock_fd);
-            exit(-1);   
+            /*已经输入了东西*/
+            if(NULL == fgets(send_buffer , sizeof(send_buffer) , stdin)) //从stdin里读出来
+            {
+                perror("fgets"); 
+                close(client_sock_fd);
+                exit(-1);                   
+            }
+            if(send_buffer[0] == 'q' && send_buffer[1] == '\n')
+            {
+                printf("exit chat!\n");
+                close(client_sock_fd);
+                exit(0);
+            }
+            /*从stdin里读出来的字符串是这样的：hello\n\0 , 可以处理一下换行符 。 strlen()返回的长度里包含了\n ,不包含\0  */
+            send_buffer[strlen(send_buffer) - 1] = '\0';
+            if(send(client_sock_fd , send_buffer , sizeof(send_buffer) , 0) == -1)
+            {
+                perror("fail to send"); 
+                close(client_sock_fd);
+                exit(-1);   
+            }
 
         }
-        rec_len = recv(client_sock_fd , rec_buffer , sizeof(rec_buffer) , 0);    //出现乱码的原因：客户端读的字节数量多于服务端发送的字节数量
-        if(rec_len == -1)
+
+        if(FD_ISSET(client_sock_fd , &read_set))
         {
-            perror("fail to recive"); 
-            close(client_sock_fd);
-            exit(-1);   
+            rec_len = recv(client_sock_fd , rec_buffer , sizeof(rec_buffer) , 0);    //出现乱码的原因：客户端读的字节数量多于服务端发送的字节数量
+            if(rec_len == -1)
+            {
+                perror("fail to recive"); 
+                close(client_sock_fd);
+                exit(-1);   
+            }
+            printf("receive from server:  %s \n",rec_buffer);
         }
-        printf("receive from server:  %s \n",rec_buffer);
     }
     return 0;
 }
